@@ -35,14 +35,16 @@ import android.os.IBinder;
 import android.preference.PreferenceManager;
 import android.provider.Settings;
 import android.support.annotation.NonNull;
+import android.support.design.widget.FloatingActionButton;
 import android.support.design.widget.Snackbar;
 import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
 import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.AppCompatTextView;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
-import android.widget.Toast;
 
 import com.google.android.gms.maps.CameraUpdate;
 import com.google.android.gms.maps.CameraUpdateFactory;
@@ -57,6 +59,7 @@ import com.google.maps.model.LatLng;
 import com.google.maps.model.SnappedPoint;
 
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.List;
 
 import io.realm.Realm;
@@ -101,9 +104,17 @@ public class MainActivity extends AppCompatActivity implements
     // UI elements.
     private Button mRequestLocationUpdatesButton;
     private Button mRemoveLocationUpdatesButton;
+    private FloatingActionButton mBtnStartStop;
+    private AppCompatTextView mTvStatOne;
+    private AppCompatTextView mTvStatTwo;
+    private AppCompatTextView mTvStatThree;
     private GoogleMap mMap;
     private GeoApiContext mGeoApiContext;
     private Realm mRealm;
+    private Calendar mCalendar;
+    private Location mLocation;
+    private float mDistance = 0.0f;
+    private boolean isTracking = false;
 
     /**
      * The number of points allowed per API request. This is a fixed value.
@@ -140,7 +151,9 @@ public class MainActivity extends AppCompatActivity implements
         locationUpdateReceiver = new LocationUpdateReceiver();
         mGeoApiContext = new GeoApiContext().setApiKey(getString(R.string.google_maps_web_services_key));
         mRealm = Realm.getDefaultInstance();
+        mCalendar = Calendar.getInstance();
         setContentView(R.layout.activity_main);
+        initViews();
 
         // Check that the user hasn't revoked permissions by going to Settings.
         if (Utils.requestingLocationUpdates(this)) {
@@ -156,6 +169,16 @@ public class MainActivity extends AppCompatActivity implements
         PreferenceManager.getDefaultSharedPreferences(this)
                 .registerOnSharedPreferenceChangeListener(this);
 
+        // Restore the state of the buttons when the activity (re)launches.
+        setButtonsState(Utils.requestingLocationUpdates(this));
+
+        // Bind to the service. If the service is in foreground mode, this signals to the service
+        // that since this activity is in the foreground, the service can exit foreground mode.
+        bindService(new Intent(this, LocationUpdatesService.class), mServiceConnection,
+                Context.BIND_AUTO_CREATE);
+    }
+
+    private void initViews() {
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
@@ -189,13 +212,30 @@ public class MainActivity extends AppCompatActivity implements
             }
         });
 
-        // Restore the state of the buttons when the activity (re)launches.
-        setButtonsState(Utils.requestingLocationUpdates(this));
+        mTvStatOne = (AppCompatTextView) findViewById(R.id.tv_stat_one);
+        mTvStatTwo = (AppCompatTextView) findViewById(R.id.tv_stat_two);
+        mTvStatThree = (AppCompatTextView) findViewById(R.id.tv_stat_three);
+        mBtnStartStop = (FloatingActionButton) findViewById(R.id.btn_start_stop);
+        mBtnStartStop.setImageDrawable(ContextCompat.getDrawable(MainActivity.this,
+                isTracking ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play));
+        mBtnStartStop.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                isTracking = !isTracking;
+                mBtnStartStop.setImageDrawable(ContextCompat.getDrawable(MainActivity.this,
+                        isTracking ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play));
 
-        // Bind to the service. If the service is in foreground mode, this signals to the service
-        // that since this activity is in the foreground, the service can exit foreground mode.
-        bindService(new Intent(this, LocationUpdatesService.class), mServiceConnection,
-                Context.BIND_AUTO_CREATE);
+                if (isTracking) {
+                    if (!checkPermissions()) {
+                        requestPermissions();
+                    } else {
+                        mService.requestLocationUpdates();
+                    }
+                } else {
+                    mService.removeLocationUpdates();
+                }
+            }
+        });
     }
 
     @Override
@@ -399,6 +439,30 @@ public class MainActivity extends AppCompatActivity implements
         }
     }
 
+    private void displayDistance(Location location) {
+        if (mLocation != null)
+            mDistance = mDistance + location.distanceTo(mLocation);
+
+        mTvStatOne.setText(mDistance+"kms");
+        mLocation = location;
+    }
+
+    private void displayTime(long time) {
+        mCalendar.setTimeInMillis(time);
+        mTvStatOne.setText(
+                mCalendar.get(Calendar.HOUR)+":"+
+                mCalendar.get(Calendar.MINUTE)+":"+
+                mCalendar.get(Calendar.SECOND));
+    }
+
+    private void displaySpeed(float speed) {
+        mTvStatTwo.setText(speed+"km/h");
+    }
+
+    private void displayAltitude(double altitude) {
+        mTvStatThree.setText(altitude+"m");
+    }
+
     /**
      * Callback received when a permissions request has been completed.
      */
@@ -448,8 +512,12 @@ public class MainActivity extends AppCompatActivity implements
         public void onReceive(Context context, Intent intent) {
             Location location = intent.getParcelableExtra(LocationUpdatesService.EXTRA_LOCATION);
             if (location != null) {
-                Toast.makeText(MainActivity.this, Utils.getLocationText(location),
-                        Toast.LENGTH_SHORT).show();
+//                Toast.makeText(MainActivity.this, Utils.getLocationText(location),
+//                        Toast.LENGTH_SHORT).show();
+                displayDistance(location);
+//                displayTime(location.getTime());
+                displaySpeed(location.getSpeed());
+                displayAltitude(location.getAltitude());
             }
         }
     }
